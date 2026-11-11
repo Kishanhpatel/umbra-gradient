@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "models": [
+    {
+      "id": "umbra_gradient_v7.0",
+      "name": "Umbra Gradient v7.0",
+      "version": "7.0",
+      "experimental": false,
+      "default": true,
+      "format": "onnx",
+      "file": "umbra_gradient_v7.0.onnx",
+      "url": "https://github.com/Kishanhpatel/umbra-gradient/releases/download/v0.1.0/umbra_gradient_v7.0.onnx",
+      "sha256": "5ee7001de1bb0d4a1de68293e3aa06055a1d57dfd70e5648b1ae092f74cf6fe7",
+      "size_bytes": 223213091
+    }
+  ],
+  "script": {
+    "version": "0.1.0",
+    "url": "https://github.com/Kishanhpatel/umbra-gradient/releases/tag/v0.1.0"
+  }
+}
