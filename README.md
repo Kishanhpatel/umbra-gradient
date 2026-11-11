@@ -2,7 +2,7 @@
 
 Umbra Gradient is an AI background (gradient) remover for linear images in [Siril](https://siril.org). It is a Siril Python script with an AI model. It runs locally on your computer and is free. It removes sky glow, light pollution and flat-field problems while trying to keep faint nebulosity, dark nebulae and true colour.
 
-**Status: Beta (v0.1.0).** Expect rough edges.
+**Status: Beta (v0.1.1).** Expect rough edges.
 
 ![Umbra Gradient panel](docs/screenshots/Umbra_Gradient_panel.png)
 
@@ -84,7 +84,7 @@ Parity with the original PyTorch version: the corrected image differs by at most
 
 ## Layout
 
-- `Umbra_Gradient.py`: the script (v0.1.0, ONNX Runtime, with model download and update check)
+- `Umbra_Gradient.py`: the script (v0.1.1, ONNX Runtime, with model download and update check)
 - `models/models.json`: model manifest (name, version, download URL, SHA-256, size)
 - `docs/screenshots/`: panel screenshots
 - `LICENSE`, `LICENSE-MODELS.md`: licenses
