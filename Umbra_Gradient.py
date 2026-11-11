@@ -7,7 +7,8 @@ Run in Siril (Scripts menu), or standalone:
   python Umbra_Gradient.py --image in.fits --out out.fits [--model PATH.onnx] [--gradient-out model.fits]
   python Umbra_Gradient.py --ui-test        (opens the window on a fake image, runs Preview once, exits)
   python Umbra_Gradient.py --check-updates | --download [MODEL_ID|all]"""
-VERSION = '0.2.0'
+VERSION = '0.2.1'
+# 0.2.1: the preview is part of the main window again (original on open; result, hold Show original, Show gradient model).
 # 0.2.0: GPU by default also on Linux with NVIDIA (CUDA libraries installed on first run if missing); OpenVINO / MIGraphX used when installed; half-size model files with identical results (112 MB instead of 223 MB).
 # 0.1.1: buttons, check boxes, drop-down menus and scroll bars now look the same as in Umbra Astro Studio.
 # 0.1.0: First family release (ONNX Runtime, no PyTorch, replaces Umbra BGNet): whole-image Preview, optional gradient-model FITS.
@@ -67,6 +68,7 @@ class ToolSpec:
         self.progress_unit = 'tile'
         self.extras = {}                 # extra model files: kind -> file stem prefix (e.g. {'critic': 'umbra_starless_critic'}); not shown in the model picker
         self.has_editor = False          # Starless: Preview opens the correction-marks editor
+        self.inline_preview = False      # Gradient: the preview is part of the main window (original on open, result after Preview)
         self.__dict__.update(kw)
 
     @property
@@ -261,10 +263,15 @@ def make_session_factory(prefix, skip=()):
     GPU providers are tried in order of preference for the platform (CUDA, DirectML, ROCm, MIGraphX, OpenVINO, Core ML); each is checked against the CPU
     provider on one probe feed (outputs must agree to 1e-3 relative) and the first that works is used. Anything missing, failing or
     disagreeing falls through to the next, and finally to the CPU.  <PREFIX>CPU=1 forces the CPU."""
-    def factory(model_path, feed):
+    def factory(model_path, feed, dims=None):
         import onnxruntime as ort
         path = str(model_path)
-        so = ort.SessionOptions(); so.log_severity_level = 3
+        def new_opts():
+            o = ort.SessionOptions(); o.log_severity_level = 3
+            for k, v in (dims or {}).items():          # pin free dimensions (Core ML compiles a fixed shape fast, a free one very slowly)
+                o.add_free_dimension_override_by_name(k, int(v))
+            return o
+        so = new_opts()
         holder = []
         def mk_cpu():
             if not holder:
@@ -290,7 +297,7 @@ def make_session_factory(prefix, skip=()):
                 if name not in avail or lab in skip:
                     continue
                 try:
-                    so2 = ort.SessionOptions(); so2.log_severity_level = 3
+                    so2 = new_opts()
                     if dml:                                    # DirectML requirements
                         so2.enable_mem_pattern = False; so2.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
                     g = ort.InferenceSession(path, so2, providers=[(name, opts), 'CPUExecutionProvider'])
@@ -326,8 +333,7 @@ def get_engine(spec, model_path):
     p = Path(str(model_path or ''))
     if not p.is_file():
         raise FileNotFoundError(f'Model not found: {p}')
-    kw = {'critic_factory': make_session_factory(spec.prefix, skip=('Core ML',))} if spec.extras else {}   # the critic has free tile shapes: Core ML is slow there, the CPU takes about 1 s per 1024 px tile
-    eng = ENGINES[spec.key].Engine(str(p), make_session_factory(spec.prefix), **kw)
+    eng = ENGINES[spec.key].Engine(str(p), make_session_factory(spec.prefix))
     _ENGINE_CACHE[spec.key] = (str(p), eng)
     return eng
 
@@ -781,6 +787,7 @@ QPushButton:checked { background: #1474d5; border-color: #358eef; }
 QPushButton:disabled { color: #777777; border-color: #444444; }
 QPushButton#Apply { background: #1274d5; color: #ffffff; font-weight: bold; border-color: #338be7; }
 QPushButton#Apply:disabled { background: #354656; color: #808890; border-color: #43505c; }
+QPushButton#ZoomButton { padding: 3px 10px; }
 QScrollArea { border: none; background: #242424; }
 QScrollBar:vertical { background: #242424; width: 8px; margin: 0; }
 QScrollBar::handle:vertical { background: #555555; border-radius: 4px; min-height: 24px; }
@@ -799,6 +806,7 @@ QProgressBar::chunk { background: #1474d5; }
 
 IDLE_SIRIL = 'Set the controls, then press Preview or Apply. Apply replaces the image in Siril (Undo available).'
 IDLE_TEST = 'Test mode (no Siril).'
+IDLE_INLINE = 'Press Apply to see the result on the right, then Apply to Siril to write it (Undo available).'
 _QT = {}
 
 
@@ -903,24 +911,32 @@ def _qt():
 
     class PreviewWindow(QWidget):
         """Umbra <Tool> Preview (BETA): before/after with the same linked auto-stretch; hold Space (or the button) for the original."""
-        def __init__(self, spec):
+        def __init__(self, spec, embedded=False):
             super().__init__()
-            self.spec = spec
-            self.setWindowTitle(f'{spec.name} Preview (BETA)')
-            self.setStyleSheet(STYLE)
-            self.resize(820, 760)
+            self.spec, self.embedded = spec, embedded
             self.layers = {}
             self.pix = {}
             lay = QVBoxLayout(self)
-            lay.setContentsMargins(8, 8, 8, 8)
             self.view = QLabel()
             self.view.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.view.setMinimumSize(200, 200)
-            self.view.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-            lay.addWidget(self.view, 1)
+            self.size_note = ''
+            if embedded:                               # part of the main window (like Umbra Isochromatic Stretch): buttons on top, then the image
+                lay.setContentsMargins(0, 12, 0, 0)
+                lay.setSpacing(6)
+                self.view.setFixedSize(620, 470)           # resized to the image's shape (fit_view)
+                self.view.setStyleSheet('background: #191919; border: 1px solid #484848; border-radius: 7px;')
+            else:
+                self.setWindowTitle(f'{spec.name} Preview (BETA)')
+                self.setStyleSheet(STYLE)
+                self.resize(820, 760)
+                lay.setContentsMargins(8, 8, 8, 8)
+                self.view.setMinimumSize(200, 200)
+                self.view.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
             row = QHBoxLayout()
-            self.caption = QLabel('', objectName='Caption', wordWrap=True)
-            row.addWidget(self.caption, 1)
+            row.setSpacing(6)
+            self.caption = QLabel('', objectName='Badge' if embedded else 'Caption', wordWrap=not embedded)
+            if not embedded:
+                row.addWidget(self.caption, 1)
             self.orig_btn = QPushButton('Show original')
             self.show_orig = False
             self.orig_btn.setToolTip('Hold the button (or the Space key) to see the original; release to go back to the result.')
@@ -931,9 +947,19 @@ def _qt():
             if spec.alt:
                 self.alt_btn = QPushButton(spec.alt[0])
                 self.alt_btn.setCheckable(True)
+                self.alt_btn.setToolTip('Shows the gradient model: the background that is subtracted. Press again to go back to the result.')
                 self.alt_btn.toggled.connect(lambda c: (self.hold(False) if c else None, self.refresh()))
                 row.addWidget(self.alt_btn)
-            lay.addLayout(row)
+            if embedded:                               # like Umbra Guided GHS: label on the left, view buttons right-aligned above the image
+                row.insertWidget(0, self.caption)
+                row.insertStretch(1, 1)
+                if self.alt_btn is not None:           # Show gradient model, then Show original at the far right
+                    row.removeWidget(self.orig_btn); row.addWidget(self.orig_btn)
+                lay.addLayout(row)
+                lay.addWidget(self.view, 0)
+            else:
+                lay.insertWidget(0, self.view, 1)
+                lay.addLayout(row)
             self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         def hold(self, flag):
@@ -942,6 +968,7 @@ def _qt():
 
         def show_result(self, before, after, alt, caption):
             """before / after / alt: (H,W,3) uint8 (alt may be None)."""
+            self.fit_view(after.shape[1], after.shape[0])
             self.pix = {'before': QPixmap.fromImage(qimage(before)), 'after': QPixmap.fromImage(qimage(after))}
             if alt is not None:
                 self.pix['alt'] = QPixmap.fromImage(qimage(alt))
@@ -949,10 +976,33 @@ def _qt():
                 self.alt_btn.setVisible(alt is not None)
                 if alt is None:
                     self.alt_btn.setChecked(False)
+            self.orig_btn.setEnabled(True)
             self.show_orig = False
             self.caption.setText(caption)
             self.refresh()
-            self.show(); self.raise_()
+            if not self.embedded:
+                self.show(); self.raise_()
+
+        def fit_view(self, w, h):
+            """Embedded: image area follows the image shape (at most 660 x 560, at least 380 wide for the buttons)."""
+            if not self.embedded or w <= 0 or h <= 0:
+                return
+            k = min(760 / w, 600 / h)
+            size = (max(int(round(w * k)), 380), max(int(round(h * k)), 200))
+            if (self.view.width(), self.view.height()) != size:
+                self.view.setFixedSize(*size)
+                QTimer.singleShot(0, lambda: self.window().adjustSize())
+
+        def show_original(self, before, caption):
+            """Embedded preview before any run: the original only."""
+            self.fit_view(before.shape[1], before.shape[0])
+            p = QPixmap.fromImage(qimage(before))
+            self.pix = {'before': p, 'after': p}
+            self.orig_btn.setEnabled(False)
+            if self.alt_btn is not None:
+                self.alt_btn.setChecked(False); self.alt_btn.setVisible(False)
+            self.caption.setText(caption)
+            self.refresh()
 
         def current_key(self):
             if self.alt_btn is not None and self.alt_btn.isChecked() and 'alt' in self.pix:
@@ -960,6 +1010,8 @@ def _qt():
             return 'before' if self.show_orig else 'after'
 
         def refresh(self):
+            if self.embedded and len(self.pix) > 1 and self.orig_btn.isEnabled():
+                self.caption.setText({'before': 'Original', 'after': 'Result', 'alt': 'Gradient model'}[self.current_key()] + self.size_note)
             p = self.pix.get(self.current_key())
             if p is None or p.isNull():
                 return
@@ -1062,7 +1114,20 @@ def _qt():
             self.busy = False
             saved_model, saved_settings = (prefs.load(spec.key) if prefs else (None, {}))
             self.saved_model = saved_model
-            lay = QVBoxLayout(self)
+            if spec.inline_preview:                   # controls on the left, the preview on the right
+                outer = QHBoxLayout(self)
+                outer.setContentsMargins(0, 0, 14, 12)
+                outer.setSpacing(0)
+                left = QWidget()
+                left.setMinimumWidth(380)
+                left.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+                self.left = left
+                outer.addWidget(left, 0, Qt.AlignmentFlag.AlignTop)
+                lay = QVBoxLayout(left)
+            else:
+                self.left = self
+                self.setMinimumWidth(380)
+                lay = QVBoxLayout(self)
             lay.setContentsMargins(14, 12, 14, 12)
             lay.setSpacing(8)
             self.lay = lay
@@ -1107,7 +1172,14 @@ def _qt():
             self.preview_btn.clicked.connect(lambda: self.start('preview'))
             self.apply_btn = QPushButton('Apply', objectName='Apply')
             self.apply_btn.clicked.connect(lambda: self.start('apply'))
-            brow2.addWidget(self.preview_btn); brow2.addWidget(self.apply_btn)
+            if spec.inline_preview:                   # Apply shows the result in the window; Apply to Siril (beside Close) writes it
+                self.preview_btn.setText('Apply')
+                self.preview_btn.setToolTip('Runs on the whole image and shows the result on the right. The image in Siril is not changed.')
+                self.apply_btn.setText('Apply to Siril')
+                self.apply_btn.setToolTip('Writes the result to the image in Siril (Undo available). Reuses the result shown on the right when nothing has changed.')
+                brow2.addWidget(self.preview_btn)
+            else:
+                brow2.addWidget(self.preview_btn); brow2.addWidget(self.apply_btn)
             lay.addLayout(brow2)
             prow = QHBoxLayout()
             self.progress = QProgressBar()
@@ -1122,10 +1194,32 @@ def _qt():
             lay.addWidget(self.status)
             close = QPushButton('Close')
             close.clicked.connect(lambda: self.window().close())
-            lay.addWidget(close)
+            if spec.inline_preview:
+                crow = QHBoxLayout()
+                crow.addWidget(close); crow.addWidget(self.apply_btn)
+                lay.addLayout(crow)
+            else:
+                lay.addWidget(close)
+            self.idle_msg = (IDLE_INLINE if siril is not None else IDLE_TEST) if spec.inline_preview else self.idle_msg
+            self.status.setText(self.idle_msg)
             self.model_box.currentIndexChanged.connect(lambda *_: self.model_changed())
             self.folder_note = None
+            if spec.inline_preview:
+                self.preview = PreviewWindow(spec, embedded=True)
+                outer.addWidget(self.preview, 0, Qt.AlignmentFlag.AlignTop)
+                self.preview.view.setText('No image loaded in Siril.' if siril is not None else '')
+                QTimer.singleShot(0, self.show_original)
             self.refresh_models()
+
+        def show_original(self):
+            """Inline preview: show the current image (auto-stretched) until Preview has run."""
+            try:
+                data = self.read_image('preview')[0]
+                b = pool_for_display(np.asarray(data, np.float32))
+                b8 = to_rgb8(b, stretch_params(b), self.siril is not None)
+            except Exception:
+                return
+            self.preview.show_original(b8, f'Original · {data.shape[-1]}×{data.shape[-2]} px')
 
         # ---- status
         def set_status(self, msg, error=False):
@@ -1405,7 +1499,8 @@ def _qt():
                     if sp.reuse_preview and job['identity'] is not None:
                         self.cache = (job['identity'], job['key'], out, info, provider, note)
                     self.result = out
-                    self.set_status(f'Preview done in {secs:.1f} s. Ran on {provider}. The image was not changed.' + (' ' + extra if extra else ''))
+                    tail = (' Press Apply to Siril to write it.' if sp.inline_preview else ' The image was not changed.')
+                    self.set_status(f'{"Done" if sp.inline_preview else "Preview done"} in {secs:.1f} s. Ran on {provider}.' + tail + (' ' + extra if extra else ''))
                     return
                 label = f"{sp.name} {VERSION} {sp.label(job['params'])}"
                 write_out = sp.output(job['params'], out, info)
@@ -1439,6 +1534,8 @@ def _qt():
             self.last_preview = (b8, a8, alt8)
             if self.preview is None:
                 self.preview = PreviewWindow(sp)
+            if self.preview.embedded:
+                self.preview.size_note = f' · {job["data"].shape[-1]}×{job["data"].shape[-2]} px'
             self.preview.show_result(b8, a8, alt8, f'Preview of the {job["region"]}. Same auto-stretch for before and after.')
 
         def shutdown(self):
@@ -1457,7 +1554,6 @@ def _qt():
             self.specs = {s.key: s for s in specs}
             self.combined = combined
             self.setStyleSheet(STYLE)
-            self.setFixedWidth(380)
             self.views = {}
             lay = QVBoxLayout(self)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -1480,6 +1576,7 @@ def _qt():
                 row.addWidget(self.tool_box, 1)
                 tl.addLayout(row)
                 lay.addWidget(top)
+                self.top = top
                 self.stack = None
                 for s in specs:
                     v = ToolView(s, siril, fake_image, prefs, combined_upd(specs),
@@ -1516,6 +1613,13 @@ def _qt():
             self.current_key = key
             for k, v in self.views.items():           # only the current page is visible, so the window is exactly as tall as that page needs
                 v.setVisible(k == key)
+            v = self.views[key]                         # a page with the preview beside it: the tool bar stays above the controls column
+            if v.left is not v:
+                self.top.setFixedWidth(v.left.sizeHint().width())
+                self.layout().setAlignment(self.top, Qt.AlignmentFlag.AlignLeft)
+            else:
+                self.top.setMinimumWidth(0); self.top.setMaximumWidth(16777215)
+                self.layout().setAlignment(self.top, Qt.AlignmentFlag(0))
             self.refit()
             QTimer.singleShot(0, self.refit)
             self.view().save_prefs() if not initial else None
@@ -2046,7 +2150,7 @@ def _tool_gradient():
         prefix='UMBRA_GRADIENT_', folder='Umbra Gradient',
         labels={'umbra_gradient_v7.0': 'Umbra Gradient v7.0 (default)'}, default_stems=('umbra_gradient_v7.0',),
         notes=['AI background (gradient) removal for linear images.', 'Crop stacking edges before running.'],
-        preview_whole=True, reuse_preview=True, alt=('Show gradient model', 'background'), progress_unit='step')
+        preview_whole=True, reuse_preview=True, inline_preview=True, alt=('Show gradient model', 'background'), progress_unit='step')
     return types.SimpleNamespace(**{k: v for k, v in locals().items() if not k.startswith('__')})
 
 

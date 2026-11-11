@@ -2,11 +2,15 @@
 
 Umbra Gradient is an AI background (gradient) remover for linear images in [Siril](https://siril.org). It is a Siril Python script with an AI model. It runs locally on your computer and is free. It removes sky glow, light pollution and flat-field problems while trying to keep faint nebulosity, dark nebulae and true colour.
 
-**Status: Beta (v0.2.0).** Expect rough edges.
+**Status: Beta (v0.2.1).** Expect rough edges.
 
-![Umbra Gradient panel](docs/screenshots/Umbra_Gradient_panel.png)
+![Umbra Gradient window: original](docs/screenshots/Umbra_Gradient_window_original.png)
 
-![Umbra Gradient panel](docs/screenshots/Umbra_Gradient_panel_updnote.png)
+![Umbra Gradient window: result](docs/screenshots/Umbra_Gradient_window.png)
+
+![Umbra Gradient window: gradient model](docs/screenshots/Umbra_Gradient_window_gradient_model.png)
+
+*Screenshots: original (Show original held), result, and the gradient model, on a 2.5 h widefield stack of the IC 1396 region.*
 
 ## Download and install
 
@@ -30,9 +34,9 @@ There are no sliders. One option:
 Crop stacking edges before running.
 
 
-**Preview.** The **Preview** button opens a separate, resizable window. The Gradient preview always runs on the whole image (the model needs global context) and shows it shrunk. Hold down **Show original** (or the Space key) to see the original and release it to see the result again; **Show gradient model** shows the background that would be removed. If you press **Apply** with unchanged settings, the preview result is reused. It never changes the image in Siril.
+**Apply (in the window).** The image is shown on the right of the window. When the window opens it shows the current image (auto-stretched). **Apply** runs the model on the whole image (it needs global context) and shows the result there, shrunk, with the same stretch as the original. It does not change the image in Siril. The buttons above the image: hold down **Show original** (or the Space key) to see the original and release it to see the result again; **Show gradient model** shows the background that is removed.
 
-**Apply.** **Apply** replaces the image in Siril with the result. Use Siril's **Undo** to go back. Siril's scripting interface cannot write a FITS HISTORY line, so the settings used are written to the Siril log (and into any extra FITS file the tool saves).
+**Apply to Siril.** **Apply to Siril** (next to **Close**) replaces the image in Siril with the result; if nothing changed since **Apply**, the result shown is reused. Use Siril's **Undo** to go back. Siril's scripting interface cannot write a FITS HISTORY line, so the settings used are written to the Siril log (and into any extra FITS file the tool saves).
 
 **Command line.** `python Umbra_Gradient.py --image IN.fits --out OUT.fits` runs the tool without a window. Flags: `--gradient-out FILE`, `--model PATH`. `--check-updates` and `--download [MODEL_ID|all]` work from the command line too, and `--help` lists everything.
 
@@ -93,9 +97,9 @@ Parity with the original PyTorch version: the corrected image differs by at most
 
 ## Layout
 
-- `Umbra_Gradient.py`: the script (v0.2.0, ONNX Runtime, with model download and update check)
+- `Umbra_Gradient.py`: the script (v0.2.1, ONNX Runtime, with model download and update check)
 - `models/models.json`: model manifest (name, version, download URL, SHA-256, size)
-- `docs/screenshots/`: panel screenshots
+- `docs/screenshots/`: window screenshots
 - `LICENSE`, `LICENSE-MODELS.md`: licenses
 
 ## Contact
