@@ -7,7 +7,8 @@ Run in Siril (Scripts menu), or standalone:
   python Umbra_Gradient.py --image in.fits --out out.fits [--model PATH.onnx] [--gradient-out model.fits]
   python Umbra_Gradient.py --ui-test        (opens the window on a fake image, runs Preview once, exits)
   python Umbra_Gradient.py --check-updates | --download [MODEL_ID|all]"""
-VERSION = '0.2.1'
+VERSION = '0.2.2'
+# 0.2.2: very bright stars with a huge round glow (e.g. Alnitak by the Flame Nebula) no longer leave a dark hole: their glow is ignored when modelling the background; the sky colour is kept (no blue / green cast after subtraction).
 # 0.2.1: the preview is part of the main window again (original on open; result, hold Show original, Show gradient model).
 # 0.2.0: GPU by default also on Linux with NVIDIA (CUDA libraries installed on first run if missing); OpenVINO / MIGraphX used when installed; half-size model files with identical results (112 MB instead of 223 MB).
 # 0.1.1: buttons, check boxes, drop-down menus and scroll bars now look the same as in Umbra Astro Studio.
@@ -1859,12 +1860,18 @@ def _engine_gradient():
       2. area resize to 256x256 (the network's fixed input), per-image normalisation with multi-stretch features,
       3. network (ONNX, fixed input 1x12x256x256, output a 3x64x64 control grid),
       4. bicubic 64 -> 256, Gaussian de-ripple (sigma 1.5 px of the 256 grid), bicubic 256 -> full size,
-      5. back to image units, additive subtraction of the model minus its mean (the pedestal is kept).
+      5. back to image units, additive subtraction of the model minus its per-channel median (the pedestal is kept).
+    Bright-star glows (0.3.0): a very bright star with a huge round glow (e.g. Alnitak next to the Flame Nebula) passes the
+    block median and the network reads its glow as sky gradient, leaving a dark hole and a colour cast.  Such glows are found
+    by glow_mask() and hidden from the background estimate (step 1-2, like NaN pixels); the model is still subtracted
+    everywhere.  Only round, isolated glows are hidden: bright stars inside bright nebula (M42, M16) are left alone.
     Replacements for the torch / OpenCV ops (verified numerically against them in tests/test_gradient_engine.py):
     cv2 INTER_AREA -> exact-overlap area weights, torch bicubic (align_corners=False, A=-0.75) -> separable
     weight matrices, torch replicate-padded conv -> scipy.ndimage.convolve1d(mode='nearest').
 
-    params (all optional, {} is the current behaviour): none yet. Unknown keys are ignored.
+    params (all optional): 'star_glow' (default True): hide big bright-star glows from the background estimate;
+    'pedestal' ('median' default, 'mean' = BGNet 0.1.3 behaviour; the mean shifts the sky colour when the model holds a bright
+    area).  Unknown keys are ignored.
     info: 'notes' (list of str), 'background' (the gradient model, same shape and dtype as the input image)."""
     import math
     import numpy as np
@@ -2025,6 +2032,105 @@ def _engine_gradient():
         return f, o, s
 
 
+    # ------------------------------------------------------------------------------------------ bright-star glows
+    GLOW_ROUND = 0.8      # faintest of 12 sectors / median sector excess, in both glow rings (Alnitak 0.94-0.96, nebula 0.1-0.75)
+    GLOW_MAX_STARS = 4
+
+
+    def glow_mask(img3, valid):
+        """(H, W) bool of pixels inside the glow of very bright, isolated stars, and a list of (y, x, radius_px).
+        img3: (H, W, 3) float32 linear, valid: (H, W) bool.  Works on a ~800 px block-mean luminance; a candidate must
+          - be a smoothed local maximum > 50 sigma above the sky,
+          - still be > max(3 D, 20 sigma) above the sky in a ring at 2-4 % of the frame's short side (D = the frame's own
+            large-scale background variation, 10-90 % of 64-block medians), with a core >= 8x brighter than that ring,
+          - have a sharp full-resolution peak (>= 4x the glow at 1-2 % of the frame size): a star, not a nebula core,
+          - be round: in that ring and in one twice as far, the faintest of 12 sectors keeps >= GLOW_ROUND of the median.
+        Radius: where the ring median falls below max(0.5 D, 5 sigma) above the sky, x1.15, at most 35 % of the short side."""
+        from scipy import ndimage
+        H, W, _ = img3.shape
+        none = (np.zeros((H, W), bool), [])
+        S = min(H, W)
+        f = max(1, S // 800)
+        h, w = H // f, W // f
+        if h < 64 or w < 64:
+            return none
+        L = img3[:h * f, :w * f].mean(-1)
+        v = valid[:h * f, :w * f]
+        Ld = L.reshape(h, f, w, f).mean((1, 3))
+        vd = v.reshape(h, f, w, f).all((1, 3))
+        if vd.sum() < 1000:
+            return none
+        sky = float(np.median(Ld[vd]))
+        sig = float(np.median(np.abs(Ld[vd] - ndimage.median_filter(Ld, 5)[vd])) * 1.4826) + 1e-12
+        b = max(1, min(h, w) // 64)
+        hb, wb = h // b, w // b
+        blk = np.median(Ld[:hb * b, :wb * b].reshape(hb, b, wb, b).transpose(0, 2, 1, 3).reshape(hb, wb, -1), -1)
+        D = float(np.percentile(blk, 90) - np.percentile(blk, 10))
+        Ls = ndimage.gaussian_filter(np.where(vd, Ld, sky), 1.5)
+        mx = ndimage.maximum_filter(Ls, size=max(9, min(h, w) // 40))
+        ys, xs = np.nonzero((Ls == mx) & vd & (Ls > sky + 50 * sig))
+        order = np.argsort(-Ls[ys, xs])[:40]
+        yy, xx = np.indices((h, w))
+        r1, r2, rmax = 0.02 * S / f, 0.04 * S / f, 0.35 * S / f
+        step = max(1.0, 0.01 * S / f)
+        out = np.zeros((h, w), bool)
+        found = []
+        for i in order:
+            cy, cx = int(ys[i]), int(xs[i])
+            if any(math.hypot(cy - fy / f, cx - fx / f) < r2 for fy, fx, _ in found):
+                continue
+            R = np.hypot(yy - cy, xx - cx)
+            ring = vd & (R >= r1) & (R < r2)
+            if ring.sum() < 20:
+                continue
+            ex = float(np.median(Ld[ring])) - sky
+            if ex < max(3.0 * D, 20 * sig) or float(Ls[cy, cx]) - sky < 8 * ex:
+                continue
+            Y0, X0 = cy * f, cx * f
+            rw = max(3 * f, 8)
+            ya, xa = max(0, Y0 - rw), max(0, X0 - rw)
+            win = L[ya:Y0 + rw + f, xa:X0 + rw + f]
+            py, px = np.unravel_index(int(np.argmax(win)), win.shape)
+            Y0, X0 = ya + py, xa + px
+            q = int(0.02 * S)
+            y0, y1, x0, x1 = max(0, Y0 - q), min(L.shape[0], Y0 + q + 1), max(0, X0 - q), min(L.shape[1], X0 + q + 1)
+            Rf = np.hypot(*np.ogrid[y0 - Y0:y1 - Y0, x0 - X0:x1 - X0])
+            an = (Rf >= 0.01 * S) & (Rf < 0.02 * S) & v[y0:y1, x0:x1]
+            if an.sum() < 20 or float(L[Y0, X0]) - sky < 4 * (float(np.median(L[y0:y1, x0:x1][an])) - sky):
+                continue
+            sec = ((np.arctan2(yy - cy, xx - cx) + np.pi) / (2 * np.pi) * 12).astype(int) % 12
+            rnd = []
+            for ra, rb in ((r1, r2), (2 * r1, 2 * r2)):
+                rg = vd & (R >= ra) & (R < rb)
+                se = [float(np.median(Ld[rg & (sec == k)])) - sky for k in range(12) if (rg & (sec == k)).sum() >= 5]
+                if len(se) < 10:
+                    break
+                rnd.append(min(se) / max(float(np.median(se)), 1e-12))
+            if len(rnd) < 2 or min(rnd) < GLOW_ROUND:
+                continue
+            thr = max(0.5 * D, 5 * sig)
+            rad = rmax
+            for r in np.arange(r2, rmax, step):
+                a = vd & (R >= r) & (R < r + max(2.0, step))
+                if a.sum() >= 20 and float(np.median(Ld[a])) - sky < thr:
+                    rad = r
+                    break
+            rad = min(rmax, 1.15 * rad)
+            out |= R < rad
+            found.append((cy * f + f // 2, cx * f + f // 2, int(round(rad * f))))
+            if len(found) >= GLOW_MAX_STARS:
+                break
+        if not found:
+            return none
+        m = np.zeros((H, W), bool)
+        m[:h * f, :w * f] = np.repeat(np.repeat(out, f, 0), f, 1)
+        if h * f < H:
+            m[h * f:, :] = m[h * f - 1:h * f, :]
+        if w * f < W:
+            m[:, w * f:] = m[:, w * f - 1:w * f]
+        return m, found
+
+
     # ------------------------------------------------------------------------------------------ engine
     class Engine:
         def __init__(self, model_path, session_factory):
@@ -2058,7 +2164,15 @@ def _engine_gradient():
                 notes.append('No valid pixels: image returned unchanged.')
                 bg = np.zeros_like(data, dtype=np.float32)
                 return data.copy(), {'notes': notes, 'background': bg}
-            small, cm = block_median(img3, mask)
+            p = params or {}
+            est = mask
+            if p.get('star_glow', True):
+                gm, stars = glow_mask(img3, mask)
+                if stars and (mask & ~gm).sum() > 0.3 * mask.sum():
+                    est = mask & ~gm
+                    notes.append('Ignored the glow of ' + ('1 bright star' if len(stars) == 1 else f'{len(stars)} bright stars')
+                                 + ' when modelling the background (radius ' + ', '.join(f'{r} px' for _, _, r in stars) + ').')
+            small, cm = block_median(img3, est)
             tick(1)
             x = np.moveaxis(area_resize(small, (TILE, TILE)), -1, 0).copy()
             m = area_resize(cm.astype(np.float32), (TILE, TILE)) > 0.5
@@ -2073,7 +2187,11 @@ def _engine_gradient():
                 B[..., c] = bicubic_resize(g[c], (H, W))
             B = B * np.float32(s) + o[None, None, :]
             tick(4)
-            Bc = B - B[mask].mean(0, dtype=np.float64).astype(np.float32)
+            if p.get('pedestal', 'median') == 'mean':
+                ped = B[mask].mean(0, dtype=np.float64).astype(np.float32)
+            else:
+                ped = np.median(B[mask], axis=0).astype(np.float32)
+            Bc = B - ped
             out3 = img3.copy()
             out3[mask] = img3[mask] - Bc[mask]
             if mono:

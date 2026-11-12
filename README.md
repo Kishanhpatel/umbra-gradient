@@ -2,7 +2,7 @@
 
 Umbra Gradient is an AI background (gradient) remover for linear images in [Siril](https://siril.org). It is a Siril Python script with an AI model. It runs locally on your computer and is free. It removes sky glow, light pollution and flat-field problems while trying to keep faint nebulosity, dark nebulae and true colour.
 
-**Status: Beta (v0.2.1).** Expect rough edges.
+**Status: Beta (v0.2.2).** Expect rough edges.
 
 ![Umbra Gradient window: original](docs/screenshots/Umbra_Gradient_window_original.png)
 
@@ -25,7 +25,9 @@ Umbra Gradient is an AI background (gradient) remover for linear images in [Siri
 
 ## What it does
 
-The model looks at the whole image (shrunk to 256 x 256) and predicts a smooth background as a 64 x 64 grid per colour channel. That grid is scaled up and subtracted. Because the background is smooth by construction, it cannot add noise or texture. The mean background level is kept, so colour neutralisation is left to a later step.
+The model looks at the whole image (shrunk to 256 x 256) and predicts a smooth background as a 64 x 64 grid per colour channel. That grid is scaled up and subtracted. Because the background is smooth by construction, it cannot add noise or texture. The median background level of each colour is kept, so the sky keeps its colour balance and colour neutralisation is left to a later step.
+
+**Very bright stars (since v0.2.2).** A very bright star with a huge round glow, such as Alnitak next to the Flame Nebula, used to be read as part of the gradient: its glow was subtracted, leaving a dark hole around the star and a colour cast across the frame. Such glows are now found automatically and left out when the background is modelled (the background is still subtracted everywhere). The Siril log says when this happens and the radius used. Only round, isolated glows count, so bright stars inside bright nebula or galaxies (M42, M16, M31) are handled exactly as before.
 
 There are no sliders. One option:
 
@@ -54,7 +56,7 @@ Models are published as GitHub release assets and are not stored in this reposit
 
 - Keeps dark sky, dark nebulae, dust lanes and nebula colour. In our injection tests about 99.9% of added faint nebula was kept.
 - Output is a smooth model that is subtracted, so no noise or texture is added.
-- Removes soft-edged steps and bands (dew or hood shadows, panel seams, flat stripes) and glare around bright stars. About 8% of an added soft step or band was left (median).
+- Removes soft-edged steps and bands (dew or hood shadows, panel seams, flat stripes) and glare around bright stars, while very bright stars with a huge round glow keep it (v0.2.2). About 8% of an added soft step or band was left (median).
 - Works on colour and mono images and on images with NaN or zero stacking borders.
 - Fast: a full 6000 x 6000 frame takes a few seconds.
 
@@ -93,11 +95,11 @@ NOT tested:
 - Intel Macs.
 - The interactive window inside the Siril GUI.
 
-Parity with the original PyTorch version: the corrected image differs by at most 0.002 noise sigma at a pixel and about 1e-5 sigma rms on every case (four real full frames up to 3840 x 2160, a 2048 px crop with saturated stars, a 6016 x 6016 full frame, mono, a 300 x 250 crop, and a frame with a NaN hole), and the background model by less than 1e-6 of its level. Core ML and CPU agree. A 300 x 250 crop matched the same way, because the model always sees the whole image shrunk to 256 x 256.
+Parity with the original PyTorch version (measured with the v0.2.2 bright-star handling and median level switched off, which is how the PyTorch version worked): the corrected image differs by at most 0.002 noise sigma at a pixel and about 1e-5 sigma rms on every case (four real full frames up to 3840 x 2160, a 2048 px crop with saturated stars, a 6016 x 6016 full frame, mono, a 300 x 250 crop, and a frame with a NaN hole), and the background model by less than 1e-6 of its level. Core ML and CPU agree. A 300 x 250 crop matched the same way, because the model always sees the whole image shrunk to 256 x 256.
 
 ## Layout
 
-- `Umbra_Gradient.py`: the script (v0.2.1, ONNX Runtime, with model download and update check)
+- `Umbra_Gradient.py`: the script (v0.2.2, ONNX Runtime, with model download and update check)
 - `models/models.json`: model manifest (name, version, download URL, SHA-256, size)
 - `docs/screenshots/`: window screenshots
 - `LICENSE`, `LICENSE-MODELS.md`: licenses
