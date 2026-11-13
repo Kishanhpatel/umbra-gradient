@@ -2,7 +2,7 @@
 
 Umbra Gradient is an AI background (gradient) remover for linear images in [Siril](https://siril.org). It is a Siril Python script with an AI model. It runs locally on your computer and is free. It removes sky glow, light pollution and flat-field problems while trying to keep faint nebulosity, dark nebulae and true colour.
 
-**Status: Beta (v0.2.2).** Expect rough edges.
+**Status: Beta (v0.3.0).** Expect rough edges.
 
 ![Umbra Gradient window: original](docs/screenshots/Umbra_Gradient_window_original.png)
 
@@ -10,18 +10,18 @@ Umbra Gradient is an AI background (gradient) remover for linear images in [Siri
 
 ![Umbra Gradient window: gradient model](docs/screenshots/Umbra_Gradient_window_gradient_model.png)
 
-*Screenshots: original (Show original held), result, and the gradient model, on a 2.5 h widefield stack of the IC 1396 region.*
+*Screenshots (synthetic test image): the original (Show original held), the result, and the gradient model (Show gradient model).*
 
 ## Download and install
 
 1. Download the single file [`Umbra_Gradient.py`](https://raw.githubusercontent.com/Kishanhpatel/umbra-gradient/main/Umbra_Gradient.py) (also attached to the [latest release](https://github.com/Kishanhpatel/umbra-gradient/releases/latest)). Save it in any folder you like. Siril has no standard scripts folder name.
 2. In Siril open **Preferences > Scripts**, add that folder, refresh the list, then run **Umbra Gradient** from the Scripts menu.
 3. First run: Siril installs the Python packages the script needs (numpy, onnxruntime, PyQt6, scipy, astropy). This can take a few minutes.
-4. If no model is installed, press **Download model** (Umbra Gradient v7.0, about 112 MB). The file is checked with SHA-256 and saved in a folder named `Umbra Gradient` next to the script.
+4. If no model is installed, the model drop-down lists it as "Umbra Gradient v7.0 (Not Downloaded)". Select it and press **Download**, right of the drop-down (about 112 MB). The file is checked with SHA-256 and saved in a folder named `Umbra Gradient` next to the script.
 
 **Manual install.** Download the `.onnx` file from the [release page](https://github.com/Kishanhpatel/umbra-gradient/releases/latest) and put it in the `Umbra Gradient` folder next to the script. To use another folder, set `UMBRA_GRADIENT_MODEL_DIR` to it. `UMBRA_GRADIENT_MODEL` can point at one specific model file.
 
-**Updates.** **Check for updates** compares your installed models and the script version with the published list (`models/models.json`). A new or changed model downloads only when you press the button. A newer script is shown as a link to the release page; the script never replaces itself. Nothing is sent about you or your computer (only a generic client name). With no network the installed models keep working. Set `UMBRA_GRADIENT_OFFLINE=1` (or `UMBRA_OFFLINE=1`) to turn the lookup off.
+**Updates.** Each time the script opens, it checks the published list (`models/models.json`) for a newer script and for new or changed models. A line under the model row shows the result. In green: "The models for this tool are up to date." In yellow: "There is an update to this script available" or "There is a new model available for this tool, select the model in the dropdown and click Download to install." A model downloads only when you press **Download**. A newer script is shown as a link to the release page; the script never replaces itself. Nothing is sent about you or your computer (only a generic client name). With no network the installed models keep working. Set `UMBRA_GRADIENT_OFFLINE=1` (or `UMBRA_OFFLINE=1`) to turn the lookup off.
 
 ## What it does
 
@@ -29,16 +29,14 @@ The model looks at the whole image (shrunk to 256 x 256) and predicts a smooth b
 
 **Very bright stars (since v0.2.2).** A very bright star with a huge round glow, such as Alnitak next to the Flame Nebula, used to be read as part of the gradient: its glow was subtracted, leaving a dark hole around the star and a colour cast across the frame. Such glows are now found automatically and left out when the background is modelled (the background is still subtracted everywhere). The Siril log says when this happens and the radius used. Only round, isolated glows count, so bright stars inside bright nebula or galaxies (M42, M16, M31) are handled exactly as before.
 
-There are no sliders. One option:
-
-- **Also save the gradient model as FITS next to the image**: saves the subtracted background as `<image>_gradient.fit` in the same folder (a new file). Default off.
+There are no sliders and no options. To save the subtracted background as a FITS file, use `--gradient-out` on the command line.
 
 Crop stacking edges before running.
 
 
-**Apply (in the window).** The image is shown on the right of the window. When the window opens it shows the current image (auto-stretched). **Apply** runs the model on the whole image (it needs global context) and shows the result there, shrunk, with the same stretch as the original. It does not change the image in Siril. The buttons above the image: hold down **Show original** (or the Space key) to see the original and release it to see the result again; **Show gradient model** shows the background that is removed.
+**The window.** The window has a fixed-width controls column on the left and a large image area on the right. The image area shows the current image (auto-stretched) as soon as the window opens. Scroll or pinch to zoom and drag to pan. Double-click the image or press **Fit** to fit the whole image. Hold down **Show original** (or the Space key) to compare with the original; release it to see the result again. The window keeps its size when you switch tools or models.
 
-**Apply to Siril.** **Apply to Siril** (next to **Close**) replaces the image in Siril with the result; if nothing changed since **Apply**, the result shown is reused. Use Siril's **Undo** to go back. Siril's scripting interface cannot write a FITS HISTORY line, so the settings used are written to the Siril log (and into any extra FITS file the tool saves).
+**Apply and Apply to Siril.** **Apply** runs the model on the whole image (it needs global context) and shows the result in the image area, with the same stretch as the original. The image in Siril is not changed. **Show gradient model** in the image area shows the background that is subtracted. **Apply to Siril** writes the result to the image in Siril. Use Siril's **Undo** to go back. If nothing changed since **Apply**, the result shown is reused. **Undo all** (bottom row, between **Close** and **Apply to Siril**) puts back the image as it was when the window opened. It becomes active after an **Apply to Siril**. Siril's scripting interface cannot write a FITS HISTORY line, so the settings used are written to the Siril log (and into any extra FITS file the tool saves).
 
 **Command line.** `python Umbra_Gradient.py --image IN.fits --out OUT.fits` runs the tool without a window. Flags: `--gradient-out FILE`, `--model PATH`. `--check-updates` and `--download [MODEL_ID|all]` work from the command line too, and `--help` lists everything.
 
@@ -99,7 +97,7 @@ Parity with the original PyTorch version (measured with the v0.2.2 bright-star h
 
 ## Layout
 
-- `Umbra_Gradient.py`: the script (v0.2.2, ONNX Runtime, with model download and update check)
+- `Umbra_Gradient.py`: the script (v0.3.0, ONNX Runtime, with model download and update check)
 - `models/models.json`: model manifest (name, version, download URL, SHA-256, size)
 - `docs/screenshots/`: window screenshots
 - `LICENSE`, `LICENSE-MODELS.md`: licenses
