@@ -4,14 +4,6 @@ Umbra Gradient is an AI background (gradient) remover for linear images in [Siri
 
 **Status: Beta (v0.3.0).** Expect rough edges.
 
-![Umbra Gradient window: original](docs/screenshots/Umbra_Gradient_window_original.png)
-
-![Umbra Gradient window: result](docs/screenshots/Umbra_Gradient_window.png)
-
-![Umbra Gradient window: gradient model](docs/screenshots/Umbra_Gradient_window_gradient_model.png)
-
-*Screenshots (synthetic test image): the original (Show original held), the result, and the gradient model (Show gradient model).*
-
 ## Download and install
 
 1. Download the single file [`Umbra_Gradient.py`](https://raw.githubusercontent.com/Kishanhpatel/umbra-gradient/main/Umbra_Gradient.py) (also attached to the [latest release](https://github.com/Kishanhpatel/umbra-gradient/releases/latest)). Save it in any folder you like. Siril has no standard scripts folder name.
@@ -108,7 +100,6 @@ Parity with the original PyTorch version (measured with the v0.2.2 bright-star h
 
 - `Umbra_Gradient.py`: the script (v0.3.0, ONNX Runtime, with model download and update check)
 - `models/models.json`: model manifest (name, version, download URL, SHA-256, size)
-- `docs/screenshots/`: window screenshots
 - `LICENSE`, `LICENSE-MODELS.md`: licenses
 
 ## Contact
